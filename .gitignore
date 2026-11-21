@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Local binary tools (auto-bootstrapped on launch)
+tools/platform-tools/
+tools/scrcpy/
+tools/*.zip
+tools/_*
+
+# Application Runtime Logs
+logs/
+*.log
+
+# Test execution results and personal phone number files
+test_results.csv
+9820806052.txt
+*.csv
+!sample_*.csv
+
+# OS specific files
+Thumbs.db
+.DS_Store

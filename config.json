@@ -1,0 +1,19 @@
+{
+  "platform_tools_url_windows": "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+  "scrcpy_url_windows": "https://github.com/Genymobile/scrcpy/releases/latest/download/scrcpy-win64-v3.3.3.zip",
+  "auto_download_tools": true,
+  "scrcpy_fullscreen": false,
+  "scrcpy_always_on_top": false,
+  "scrcpy_show_touches": false,
+  "country_code": "91",
+  "adb_timeout": 10,
+  "last_divert_number": "",
+  "dial_timeout_seconds": 15.0,
+  "call_duration_seconds": 4.0,
+  "post_call_delay_seconds": 1.0,
+  "wait_for_idle_seconds": 2.0,
+  "speaker_on": true,
+  "call_volume_percent": 80,
+  "media_volume_percent": 60,
+  "auto_reject_incoming_calls": true
+}

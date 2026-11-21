@@ -1,0 +1,9 @@
+# Sample Number Queue
+# Format: 10-digit Indian numbers or International E.164 (+CountryCode...)
+# Supports plain text (.txt), comma-separated (.csv), and vCard (.vcf)
+
++919800000001
++919800000002
++919800000003
++919800000004
++919800000005

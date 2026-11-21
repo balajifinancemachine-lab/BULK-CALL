@@ -1,19 +1,19 @@
-# -*- coding: utf-8 -*-
 """
 Automated unit tests for ADB Alert & Bulk Call Manager Pro.
 """
 
 import unittest
+
 from adb_alert_call_manager_pro import (
-    normalize_number,
-    _mmi_safe_number,
-    parse_call_state_text,
-    is_incoming_call_ringing,
-    parse_numbers_from_text,
-    TerminalCaptureStream,
-    CONFIG,
     CONFIG_FILE,
+    TerminalCaptureStream,
+    _mmi_safe_number,
+    is_incoming_call_ringing,
+    normalize_number,
+    parse_call_state_text,
+    parse_numbers_from_text,
 )
+
 
 class TestCallManager(unittest.TestCase):
     def test_normalize_number(self):

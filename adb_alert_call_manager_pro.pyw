@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ADB Device Alert & Bulk Call Console PRO
 
@@ -24,10 +23,10 @@ Key Features:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import platform
 import queue
@@ -37,24 +36,26 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 try:
     import customtkinter as ctk
     CTK = True
-except Exception:
+except (ImportError, ModuleNotFoundError):
     CTK = False
     import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    from tkinter import filedialog, messagebox, ttk
 
 if CTK:
     import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(__file__).resolve().parent
 TOOLS = ROOT / "tools"
@@ -77,10 +78,8 @@ APP_LOG_FILE = LOG_DIR / "app.log"
 # Reconfigure standard streams for UTF-8 on Windows consoles
 for stream in (sys.stdout, sys.stderr):
     if stream and hasattr(stream, "reconfigure"):
-        try:
+        with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
 
 class TerminalCaptureStream:
     """
@@ -93,32 +92,22 @@ class TerminalCaptureStream:
 
     def write(self, data):
         if self.original_stream:
-            try:
+            with contextlib.suppress(Exception):
                 self.original_stream.write(data)
                 self.original_stream.flush()
-            except Exception:
-                pass
         if data:
-            with self._lock:
-                try:
-                    with self.log_file_path.open("a", encoding="utf-8", errors="replace") as f:
-                        f.write(data)
-                except Exception:
-                    pass
+            with self._lock, contextlib.suppress(Exception), self.log_file_path.open("a", encoding="utf-8", errors="replace") as f:
+                f.write(data)
 
     def flush(self):
         if self.original_stream and hasattr(self.original_stream, "flush"):
-            try:
+            with contextlib.suppress(Exception):
                 self.original_stream.flush()
-            except Exception:
-                pass
 
     def isatty(self):
         if self.original_stream and hasattr(self.original_stream, "isatty"):
-            try:
-                return self.original_stream.isatty()
-            except Exception:
-                return False
+            with contextlib.suppress(Exception):
+                return bool(self.original_stream.isatty())
         return False
 
 # Primary application logger setup with multi-file routing
@@ -209,10 +198,10 @@ def run_cmd(args, timeout=30, cwd=None):
     try:
         p = subprocess.run(
             args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=timeout,
             cwd=cwd,
+            check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         stdout = p.stdout.decode("utf-8", errors="replace") if p.stdout else ""
@@ -224,7 +213,7 @@ def run_cmd(args, timeout=30, cwd=None):
         LOGGER.warning("Command timeout (%ss): %r", timeout, args)
         return subprocess.CompletedProcess(args, 124, stdout, f"timeout: {exc}")
     except Exception as exc:
-        LOGGER.error("Command error on %r: %s", args, exc, exc_info=True)
+        LOGGER.exception("Command error on %r", args)
         return subprocess.CompletedProcess(args, 1, "", str(exc))
 
 def exe(name):
@@ -243,11 +232,9 @@ def locate_adb():
         Path(os.path.expandvars(r"%USERPROFILE%\AppData\Local\Android\Sdk\platform-tools\adb.exe")),
     ]
     for c in candidates:
-        try:
+        with contextlib.suppress(OSError):
             if c and c.exists():
                 return c
-        except Exception:
-            pass
     return None
 
 def locate_scrcpy():
@@ -327,7 +314,7 @@ def install_platform_tools(progress_cb=None):
         ADB = locate_adb()
         LOGGER.info("ADB installed: %s", ADB)
         return bool(ADB)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         log_exception("Platform-Tools bootstrap failed", exc)
         return False
 
@@ -338,8 +325,11 @@ def resolve_latest_scrcpy_asset():
         method="HEAD",
         headers={"User-Agent": "ADB-Device-Alert-Console/2.0"}
     )
-    with urllib.request.urlopen(req, timeout=40) as r:
-        final = r.geturl()
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            final = r.geturl()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        final = ""
 
     m = re.search(r"/tag/v?([^/]+)$", final)
     version = m.group(1) if m else "4.1"
@@ -368,11 +358,9 @@ def install_scrcpy(progress_cb=None):
             "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win64-v4.1.zip",
             "https://github.com/Genymobile/scrcpy/releases/download/v3.3.3/scrcpy-win64-v3.3.3.zip",
         ]
-        try:
+        with contextlib.suppress(urllib.error.URLError, TimeoutError, OSError):
             _, dyn_candidates = resolve_latest_scrcpy_asset()
             candidates = dyn_candidates + candidates
-        except Exception:
-            pass
 
         archive = TOOLS / "scrcpy-win64.zip"
         last_error = ""
@@ -383,7 +371,7 @@ def install_scrcpy(progress_cb=None):
                 download_file(url, archive, progress_cb)
                 if archive.exists() and archive.stat().st_size > 1_000_000:
                     break
-            except Exception as exc:
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
                 last_error = str(exc)
         else:
             raise RuntimeError(f"Could not download scrcpy: {last_error}")
@@ -413,7 +401,7 @@ def install_scrcpy(progress_cb=None):
         ADB = locate_adb()
         LOGGER.info("scrcpy installed: %s | ADB: %s", SCRCPY, ADB)
         return bool(SCRCPY)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         log_exception("scrcpy bootstrap failed", exc)
         return False
 
@@ -436,13 +424,13 @@ def adb_cmd(*args, serial=None, timeout=None):
     return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
 
 def adb_devices():
-    rc, out, err = adb_cmd("devices")
+    rc, out, _err = adb_cmd("devices")
     if rc is None or rc != 0:
         return []
     result = []
     for line in out.splitlines():
         line = line.strip()
-        if not line or line.startswith("List of devices attached") or line.startswith("*"):
+        if not line or line.startswith(("List of devices attached", "*")):
             continue
         bits = line.split()
         if len(bits) >= 2:
@@ -464,7 +452,7 @@ def normalize_number(value):
         return None
 
     # MMI code pass-through (e.g. *21*..., ##21#)
-    if value.startswith("*") or value.startswith("#"):
+    if value.startswith(("*", "#")):
         return value
 
     if value.startswith("+"):
@@ -503,7 +491,7 @@ def import_numbers(path):
                 raw.extend(row)
     elif p.suffix.lower() == ".vcf":
         text = p.read_text(encoding="utf-8-sig", errors="ignore")
-        raw = re.findall(r"TEL[^:]*:\s*([^\r\n]+)", text, re.I)
+        raw = re.findall(r"TEL[^:]*:\s*([^\r\n]+)", text, re.IGNORECASE)
 
     result = []
     seen = set()
@@ -563,9 +551,7 @@ def is_incoming_call_ringing(text):
     if re.search(r"\b(?:mcallstate|call_state)\s*=\s*1\b", t):
         return True
     # Check telecom dump state
-    if re.search(r"\bstate\s*=\s*ringing\b", t) or "callstate: ringing" in t:
-        return True
-    return False
+    return bool(re.search(r"\bstate\s*=\s*ringing\b", t) or "callstate: ringing" in t)
 
 def parse_call_state_text(text):
     """
@@ -624,7 +610,7 @@ def parse_call_state_text(text):
     return "IDLE"
 
 def get_call_state(serial):
-    rc, out, _ = adb_cmd(
+    _rc, out, _ = adb_cmd(
         "shell", "dumpsys", "telephony.registry",
         serial=serial, timeout=3
     )
@@ -632,7 +618,7 @@ def get_call_state(serial):
     if state != "IDLE":
         return state
 
-    rc2, out2, _ = adb_cmd(
+    _rc2, out2, _ = adb_cmd(
         "shell", "dumpsys", "telecom",
         serial=serial, timeout=3
     )
@@ -658,7 +644,7 @@ def reject_current_call(serial):
     return ok1, msg
 
 def set_volume(serial, stream, percent):
-    rc, out, err = adb_cmd(
+    _rc, out, _err = adb_cmd(
         "shell", "media_session", "volume", "--stream", str(stream),
         "--get", serial=serial, timeout=4
     )
@@ -681,7 +667,7 @@ def set_speaker(serial, on=True):
         ["shell", "cmd", "telecom", "set-speakerphone", mode],
     ]
     for cmd in attempts:
-        rc, out, err = adb_cmd(*cmd, serial=serial, timeout=3)
+        rc, out, _err = adb_cmd(*cmd, serial=serial, timeout=3)
         out_clean = (out or "").strip()
         low = out_clean.lower()
         if rc == 0 and "no shell command implementation" not in low and "unknown command" not in low:
@@ -734,11 +720,9 @@ def launch_scrcpy(serial):
 
         def watcher():
             rc = proc.wait()
-            try:
+            with contextlib.suppress(Exception):
                 logf.flush()
                 logf.close()
-            except Exception:
-                pass
             LOGGER.info("scrcpy exited pid=%s rc=%s log=%s", proc.pid, rc, session_log)
             if rc != 0:
                 LOGGER.error("scrcpy failed; inspect %s", session_log)
@@ -854,7 +838,7 @@ class CallDivertGuard:
                 _dial_mmi_and_dismiss(serial, mmi, wait_s=3.5)
                 LOGGER.info("Call divert MMI complete: %s", mmi)
                 self.app.putlog("✅ Carrier divert confirmed. Starting calls now.")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 LOGGER.error("Divert MMI error: %s", exc)
                 self.app.putlog(f"⚠️ Divert MMI may not have completed: {exc}")
             finally:
@@ -874,23 +858,19 @@ class CallDivertGuard:
             return
         self.active = False
         self._ready.set()  # Unblock any waiting thread
-        try:
+        with contextlib.suppress(Exception):
             self.app.q.put(("guard_state", False))
-        except Exception:
-            pass
         if not self.app.serial:
             return
         serial = self.app.serial
-        try:
+        with contextlib.suppress(Exception):
             self.app.putlog("📲 Cancelling all call diverts (##21#)...")
-        except Exception:
-            pass
 
         def _do():
             try:
                 _dial_mmi_and_dismiss(serial, "##21#", wait_s=3.0)
                 LOGGER.info("Call divert cancelled (##21#)")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 LOGGER.error("Cancel divert MMI error: %s", exc)
 
         threading.Thread(target=_do, daemon=True).start()
@@ -1274,7 +1254,7 @@ class App:
             if not path.exists():
                 path.write_text("", encoding="utf-8")
             os.startfile(str(path))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Log Error", f"Could not open {path.name}: {exc}")
 
     def bootstrap_worker(self):
@@ -1381,7 +1361,7 @@ class App:
         def on_ok(event=None):
             val = entry_var.get().strip()
             n = normalize_number(val)
-            if not n or n.startswith("*") or n.startswith("#"):
+            if not n or n.startswith(("*", "#")):
                 messagebox.showerror(
                     "Invalid Number",
                     f"Please enter a valid phone number (digits only, e.g. 9820806052).\nReceived: {val!r}",
@@ -1473,7 +1453,7 @@ class App:
             self.number_box.delete("1.0", "end")
             self.number_box.insert("1.0", "\n".join(self.numbers))
             self.putlog(f"Imported {len(self.numbers)} numbers from {Path(fp).name}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Import error", str(exc))
 
     def sync_numbers_from_box(self):
@@ -1507,7 +1487,7 @@ class App:
             CONFIG.update(cfg)
             CONFIG_FILE.write_text(json.dumps(CONFIG, indent=2), encoding="utf-8")
             return True
-        except Exception:
+        except (ValueError, TypeError, OSError):
             messagebox.showerror("Settings", "Please enter valid numeric settings.")
             return False
 
@@ -1536,7 +1516,7 @@ class App:
         while time.monotonic() < end and not self.stop_test.is_set():
             if not self.serial:
                 return False
-            rc, out, _ = adb_cmd("shell", "dumpsys", "telephony.registry", serial=self.serial, timeout=3)
+            _rc, out, _ = adb_cmd("shell", "dumpsys", "telephony.registry", serial=self.serial, timeout=3)
             state = parse_call_state_text(out)
             self.q.put(("state", state))
             if state == "IDLE":
@@ -1597,7 +1577,7 @@ class App:
             connected = False
 
             while time.monotonic() < dialing_deadline and not self.stop_test.is_set():
-                rc, out, _ = adb_cmd("shell", "dumpsys", "telephony.registry", serial=self.serial, timeout=3)
+                _rc, out, _ = adb_cmd("shell", "dumpsys", "telephony.registry", serial=self.serial, timeout=3)
                 state = parse_call_state_text(out)
                 self.q.put(("state", state))
 
@@ -1678,7 +1658,7 @@ class App:
             return status, message, elapsed
 
         except Exception as exc:
-            LOGGER.error("Call cycle failed on %s: %s", number, exc, exc_info=True)
+            LOGGER.exception("Call cycle failed on %s", number)
             self.putlog(f"CALL ERROR on {number}: {exc}")
             reject_current_call(self.serial)
             return "ERROR", str(exc), round(time.monotonic() - call_start, 2)
@@ -1805,7 +1785,7 @@ class App:
                         break
 
                     self.q.put(("bulk_progress", (idx, total, num, "CALLING")))
-                    status, msg, el = self.execute_call_cycle(num, idx, total)
+                    status, _msg, _el = self.execute_call_cycle(num, idx, total)
                     self.q.put(("bulk_progress", (idx, total, num, status)))
 
                     if status == "COMPLETED":
@@ -1886,10 +1866,8 @@ class App:
                 elif kind == "state":
                     state = str(payload)
                     color = "#4ade80" if state == "IDLE" else ("#f59e0b" if state in ("DIALING", "ALERTING") else "#38bdf8")
-                    try:
+                    with contextlib.suppress(Exception):
                         self.state_badge.configure(text=f"Call state: {state}", text_color=color)
-                    except Exception:
-                        pass
 
                 elif kind == "guard_state":
                     is_active = bool(payload)
@@ -1940,18 +1918,14 @@ class App:
         self.bulk_paused.clear()
         # End any active call immediately
         if self.serial:
-            try:
+            with contextlib.suppress(Exception):
                 send_key(self.serial, "KEYCODE_ENDCALL")
-            except Exception:
-                pass
         # Cancel divert in background if active, give it 1s then destroy
         if self.call_guard.active:
             t = threading.Thread(target=self.call_guard.stop, daemon=True)
             t.start()
-            try:
+            with contextlib.suppress(Exception):
                 t.join(timeout=1.0)  # Brief wait so the MMI dispatch fires
-            except Exception:
-                pass
         self.root.destroy()
 
 if __name__ == "__main__":
